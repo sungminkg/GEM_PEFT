@@ -140,13 +140,10 @@ class CopaDataset(Dataset):
     def load_dataset(self, path, **kwargs):
         train_examples = load_dataset('super_glue', "copa")["train"]
         valid_examples = load_dataset('super_glue', "copa")["validation"]
-        
-        print(train_examples)
-        print(train_examples["train"][0])
-
         train_samples = [self.build_sample(example) for example in train_examples]
         valid_samples = [self.build_sample(example) for example in valid_examples]
         self.samples = {"train": train_samples, "valid": valid_samples}
+
 
     # for generative tasks, candidates are []
     def build_sample(self, example):

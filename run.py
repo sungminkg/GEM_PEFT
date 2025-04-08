@@ -1,4 +1,6 @@
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+
 import logging
 import argparse
 import time
@@ -21,11 +23,11 @@ from metrics import calculate_metric
 from utils import *
 from PEFT import *
 
+os.environ['HF_HOME'] = '/vault/USERNAME/.cache'
+os.environ["OPENAI_API_KEY"] = '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'
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 torch.cuda.empty_cache()
 torch.cuda.reset_peak_memory_stats()
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 torch.cuda.set_device(0)
 os.environ['WANDB_MODE'] = 'disabled'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -42,7 +44,7 @@ class OurArguments(TrainingArguments):
     task_name: str = "SST2"  # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
 
     # Using float32
-    fp16: bool = True
+    fp16: bool = False
     bf16: bool = False
     
     # Number of examples
@@ -103,9 +105,6 @@ class OurArguments(TrainingArguments):
     # Random Masking
     random_masking: bool = False  # use random masking
     masking_prob: float = 0.0  # masking probability for random masking (also for structured masking)
-
-    # Structured Masking
-    structured_masking: bool = False  # use structured masking
     
     # Gradient-based Masking
     gradient_masking: bool = False
@@ -118,13 +117,13 @@ class OurArguments(TrainingArguments):
     # Entropy-based masking
     entropy_gradient_masking: bool = False
     entropy_gradweight_masking: bool = False
-    
-    # Gradient/weight Masking with pruning
-    gradweight_prune_masking: bool=False
-    prune_prob: float = 0.2
+    gradient_entropy_masking: bool = False
 
     # Bitfit
     bitfit: bool = False  # use bitfit
+    
+    # Full Fine-Tuning
+    fft: bool = False
 
 
 def parse_args():
@@ -155,6 +154,8 @@ def set_seed(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
+# Callbacks 
 class EmptyCacheCallback(TrainerCallback):
     def __init__(self, step_interval=100):  
         self.step_interval = step_interval
@@ -166,6 +167,47 @@ class EmptyCacheCallback(TrainerCallback):
     def on_epoch_end(self, args, state, control, **kwargs):
         torch.cuda.empty_cache() 
 
+class SaveWeightForSVDCallback(TrainerCallback):
+    def __init__(self, save_epochs, layer_keywords, save_dir="svd_weights"):
+        self.save_epochs = save_epochs 
+        self.layer_keywords = layer_keywords
+        self.save_dir = save_dir
+        self.initial_saved = False
+
+    def _make_save_path(self, args):
+        tag = getattr(args, 'tag', 'default')
+        task = getattr(args, 'task_name', 'unknown_task')  
+        folder_name = os.path.join(task, tag) 
+        save_path = os.path.join(self.save_dir, folder_name)
+        os.makedirs(save_path, exist_ok=True)
+        return save_path
+
+    def _save_selected_weights(self, model, args, epoch_name):
+        save_path = self._make_save_path(args)
+        selected_weights = {
+            name: param.detach().cpu()
+            for name, param in model.named_parameters()
+            if any(k in name for k in self.layer_keywords) and 'tunable_weight' in name
+        }
+        file_path = os.path.join(save_path, f"{epoch_name}_layer_weights.pt")
+        torch.save(selected_weights, file_path)
+        print(f"[SVD-CALLBACK] Saved weights: {file_path}")
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        if not self.initial_saved:
+            model = kwargs['model']
+            self._save_selected_weights(model, args, epoch_name="epoch0")
+            self.initial_saved = True
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        current_epoch = int(state.epoch)
+        if current_epoch in self.save_epochs:
+            model = kwargs['model']
+            self._save_selected_weights(model, args, epoch_name=f"epoch{current_epoch}")
+
+
+            
+
 class Framework:
     def __init__(self, args, task):
         logger.info('Start from here')
@@ -173,15 +215,13 @@ class Framework:
         self.task = task
         self.model, self.tokenizer, self.config, self.pretrained_weights = self.initialize_model_and_tokenizer()
         self.load_model()
-        # self.bert_extractor = BERTEmbeddingExtractor("bert-base-uncased", "cuda:0")
-        self.bert_extractor = BERTEmbeddingExtractor("facebook/opt-125m", "cuda:0")
-        self.scl_loss_fn = SupervisedContrastiveLoss(temperature=0.1)
+        
         
     def initialize_model_and_tokenizer(self):
         with count_time("Initializing model and tokenizer"):
             config = AutoConfig.from_pretrained(self.args.model_name)
             if self.args.auto_device:
-                torch_dtype = torch.bfloat16
+                torch_dtype = torch.float32
                 model = AutoModelForCausalLM.from_pretrained(
                     self.args.model_name,
                     config=config,
@@ -205,6 +245,7 @@ class Framework:
                     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
                     model.resize_token_embeddings(len(tokenizer))
             pretrained_weights = {name: param.clone().detach() for name, param in model.named_parameters()}
+            model = model.to('cuda')
             return model, tokenizer, config, pretrained_weights
         
         
@@ -269,280 +310,73 @@ class Framework:
 
         logger.info("Backward Pass Completed!")
         return gradients
-
     
-    def backward_select_pass(self): 
-        """
-        Perform backward pass for 1 epoch without updating weights.
-        Computes the gradient for the whole model and returns them in a dictionary.
-        The gradient results are the same as the 'backward_qv_pass'.
-        """
-        logger.info("Performing Backward Pass with selected layers for 1 Epoch...")
-
-        class HFDataset(Dataset):
-            def __init__(self, data):
-                self.data = data
-
-            def __len__(self):
-                return len(self.data)
-
-            def __getitem__(self, idx):
-                return self.data[idx]
-
-        def _convert(samples):
-            data = []
-            for sample in samples:
-                encoded_candidates, option_lens = encode_prompt_train(
-                    self.task, self.task.get_template(), [], sample, self.tokenizer,
-                    max_length=self.args.max_length, generation=self.task.generation, generation_with_gold=True,
-                    max_new_tokens=self.args.max_new_tokens
-                )
-                correct_candidate_id = 0 if self.task.generation else sample.candidates.index(sample.correct_candidate)
-                data.append({"input_ids": encoded_candidates[correct_candidate_id], 
-                            "labels": encoded_candidates[correct_candidate_id]})
-            return data
-
-        train_samples = self.task.sample_subset("train", num=self.args.num_train)
-        train_dataset = HFDataset(_convert(train_samples))
-
-        collator = DataCollatorForTokenClassification(self.tokenizer, pad_to_multiple_of=8)
-        dataloader = DataLoader(train_dataset, batch_size=self.args.per_device_train_batch_size, collate_fn=collator)
-
-        self.model.train()
-        gradients = {}
-        
-        layer_list = ['embed_tokens', 'embed_positions', 'self_attn', 'fc1', 'fc2', 'final_layer_norm']   # backward pass for all layers
-
-        # Freeze all layers by default and selectively unfreeze based on the provided layer_list
-        for name, param in self.model.named_parameters():
-            if any(layer_name in name for layer_name in layer_list):
-                param.requires_grad = True
-            else:
-                param.requires_grad = False
-
-        for step, batch in enumerate(tqdm(dataloader, desc="Backward Pass")):
-            inputs = {key: val.to(self.model.device) for key, val in batch.items()} 
-            outputs = self.model(**inputs)
-            loss = outputs.loss / self.args.gradient_accumulation_steps
-            loss.backward()
-            # torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-
-            for name, param in self.model.named_parameters():
-                if param.grad is not None and any(layer_name in name for layer_name in layer_list):
-                    gradients[name] = param.grad.clone().detach()
-            self.model.zero_grad(set_to_none=True)
-        torch.cuda.empty_cache()
-
-        logger.info("Backward Pass Completed!")
-        return gradients
-    
-
-    def scl_backward_pass(self):
-        logger.info("Performing Backward Pass with Supervised Contrastive Loss...")
-        class HFDataset(Dataset):
-            def __init__(self, data):
-                self.data = data
-            def __len__(self):
-                return len(self.data)
-            def __getitem__(self, idx):
-                return self.data[idx]
-        def _convert(samples):
-            data = []
-            for sample in samples:
-                encoded_candidates, _ = encode_prompt_train(
-                    self.task, self.task.get_template(), [], sample, self.tokenizer,
-                    max_length=self.args.max_length, generation=self.task.generation, generation_with_gold=True,
-                    max_new_tokens=self.args.max_new_tokens
-                )
-                correct_candidate_id = 0 if self.task.generation else sample.candidates.index(sample.correct_candidate)
-                data.append({"input_ids": encoded_candidates[correct_candidate_id], "labels": correct_candidate_id})
-            return data
-        train_samples = self.task.sample_subset("train", num=self.args.num_train)
-        train_dataset = HFDataset(_convert(train_samples))
-        def custom_collate_fn(batch):
-            input_ids = [item["input_ids"] for item in batch]
-            labels = [item["labels"] for item in batch]
-            input_ids = torch.nn.utils.rnn.pad_sequence(
-                [torch.tensor(ids) for ids in input_ids], batch_first=True, padding_value=0
-            )
-            labels = torch.tensor(labels)
-            return {"input_ids": input_ids, "labels": labels}
-        dataloader = DataLoader(
-            train_dataset,
-            batch_size=self.args.per_device_train_batch_size,
-            collate_fn=custom_collate_fn,
-        )
-        self.model.train()
-        gradients = {}
-        scl_loss_fn = SupervisedContrastiveLoss(temperature=0.1)
-        for step, batch in enumerate(tqdm(dataloader, desc="SCL Backward Pass")):
-            inputs = {key: val.to(self.model.device) for key, val in batch.items() if key != "labels"}
-            labels = batch["labels"].to(self.model.device)
-            outputs = self.model(**inputs, output_hidden_states=True)
-            embeddings = outputs.hidden_states[-1][:, 0, :]
-            loss = scl_loss_fn(embeddings, labels)
-            loss.backward()
-            for name, param in self.model.named_parameters():
-                if param.grad is not None:
-                    gradients[name] = param.grad.clone().detach()
-            self.model.zero_grad()
-        logger.info("SCL Backward Pass Completed!")
-        return gradients
-
 
     def load_model(self):
-        if self.args.gradient_checkpointing:
-            self.model.enable_input_require_grads()
-
-        if self.args.prefix_tuning:
-            PrefixTuning(self.model, num_prefix=self.args.num_prefix, init_by_real_act=True) 
-        elif self.args.lora:
+        if self.args.lora:
             LoRA(self.model, r=self.args.lora_r, alpha=self.args.lora_alpha)
-        elif self.args.adalora:
-            from peft import AdaLoraModel, AdaLoraConfig, TaskType
-            adalora_config = AdaLoraConfig(
-                peft_type="ADALORA",
-                task_type=TaskType.CAUSAL_LM,
-                r=self.args.lora_r,
-                lora_alpha=self.args.lora_alpha,
-                target_modules=["q_proj", "v_proj"]
-            )
-            self.model = AdaLoraModel(self.model, adalora_config, "default")  # Update self.model directly
+            
         elif self.args.adapter:
             Adapter(self.model, r=self.args.adapter_r)
+            
         elif self.args.random_masking:
-            true_masking_prob = convert_masking_prob(self.args.model_name, self.args.masking_prob)
-            logger.info(f"true masking prob: {true_masking_prob}")
-            RandomMasking(self.model, masking_prob=true_masking_prob)  
-        elif self.args.structured_masking:
-            true_masking_prob = convert_masking_prob(self.args.model_name, self.args.masking_prob)
-            logger.info(f"true masking prob: {true_masking_prob}")
-            StructuredMasking(self.model, masking_prob=true_masking_prob) 
+            RandomMasking(self.model, masking_ratio=self.args.masking_prob)  
+            
         elif self.args.bitfit:
             Bitfit(self.model)
 
         elif self.args.gradient_masking:
-            mask_mode = 'gradient'    # gradweight, weight
-            #true_masking_prob = convert_masking_prob(self.args.model_name, self.args.masking_prob)
-            true_masking_prob = self.args.masking_prob
-            logger.info(f"true masking prob: {true_masking_prob}")
+            mask_mode = 'gradient'
             gradients = self.backward_qv_pass()
-            # gradients = self.backward_select_pass()
-            # gradients = self.scl_backward_pass()
-            grad_weight_masking = GradWeightMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=true_masking_prob)
-            for param in self.model.parameters():
-                param.grad = None 
-            torch.cuda.empty_cache()
+            grad_weight_masking = GradWeightMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=self.args.masking_prob)
             
         elif self.args.gradweight_masking:
-            mask_mode = 'gradweight'    # gradweight, weight
-            #true_masking_prob = convert_masking_prob(self.args.model_name, self.args.masking_prob)
-            true_masking_prob = self.args.masking_prob
-            logger.info(f"true masking prob: {true_masking_prob}")
+            mask_mode = 'gradweight' 
             gradients = self.backward_qv_pass()
-            # gradients = self.backward_select_pass()
-            # gradients = self.scl_backward_pass()
-            grad_weight_masking = GradWeightMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=true_masking_prob)
-            for param in self.model.parameters():
-                param.grad = None 
-            torch.cuda.empty_cache()
+            grad_weight_masking = GradWeightMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=self.args.masking_prob)
         
         elif self.args.gradweight_ln_masking:
             mask_mode = 'gradweight_ln'
-            true_masking_prob = self.args.masking_prob
-            logger.info(f"true masking prob: {true_masking_prob}")
             gradients = self.backward_qv_pass()
-            # gradients = self.backward_select_pass()
-            # gradients = self.scl_backward_pass()
-            gradweight_ln_masking = GradWeightLayerNormMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=true_masking_prob)
-            for param in self.model.parameters():
-                param.grad = None  
-            torch.cuda.empty_cache()  
+            gradweight_ln_masking = GradWeightLayerNormMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=self.args.masking_prob) 
             
         elif self.args.gradweight_select_masking:
             mask_mode = 'gradweight_select'
-            true_masking_prob = self.args.masking_prob
-            logger.info(f"true masking prob: {true_masking_prob}")
             gradients = self.backward_qv_pass()
-            # gradients = self.backward_select_pass()
-            # gradients = self.scl_backward_pass()
-            gradweight_select_masking = GradWeightSelectMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=true_masking_prob)
-            for param in self.model.parameters():
-                param.grad = None  
-            torch.cuda.empty_cache()  
+            gradweight_select_masking = GradWeightSelectMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=self.args.masking_prob)
             
         elif self.args.gradweight_ln_select_masking:
             mask_mode = 'gradweight_ln_select'
-            true_masking_prob = self.args.masking_prob
-            logger.info(f"true masking prob: {true_masking_prob}")
             gradients = self.backward_qv_pass()
-            # gradients = self.backward_select_pass()
-            # gradients = self.scl_backward_pass()
-            gradweight_select_masking = GradWeightlnSelectMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=true_masking_prob)
-            for param in self.model.parameters():
-                param.grad = None  
-            torch.cuda.empty_cache() 
+            gradweight_select_masking = GradWeightlnSelectMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=self.args.masking_prob) 
             
         elif self.args.entropy_gradient_masking:
             mask_mode = 'gradient'
-            true_masking_prob = self.args.masking_prob
-            logger.info(f"true masking prob: {true_masking_prob}")
             gradients = self.backward_qv_pass()
-            # gradients = self.backward_select_pass()
-            # gradients = self.scl_backward_pass()
-            gradweight_select_masking = EntropyBasedMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=true_masking_prob)
-            for param in self.model.parameters():
-                param.grad = None  
-            torch.cuda.empty_cache() 
+            entropy_gradient_masking = EntropyBasedMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=self.args.masking_prob) 
             
         elif self.args.entropy_gradweight_masking:
             mask_mode = 'gradweight'
-            true_masking_prob = self.args.masking_prob
-            logger.info(f"true masking prob: {true_masking_prob}")
             gradients = self.backward_qv_pass()
-            # gradients = self.backward_select_pass()
-            # gradients = self.scl_backward_pass()
-            gradweight_select_masking = EntropyBasedMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=true_masking_prob)
-            for param in self.model.parameters():
-                param.grad = None  
-            torch.cuda.empty_cache() 
+            entropy_gradweight_masking = EntropyBasedMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=self.args.masking_prob) 
             
         elif self.args.gradweight_whole_masking:
             mask_mode = 'gradweight_ln'    # gradient, gradweight, gradient_ln, gradweight_ln
-            true_masking_prob = self.args.masking_prob
-            logger.info(f"true masking prob: {true_masking_prob}")
             gradients = self.backward_qv_pass()
-            # gradients = self.backward_select_pass()
-            # gradients = self.scl_backward_pass()
-            grad_weight_whole_masking = GradWeightWholeMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=true_masking_prob)
-            for param in self.model.parameters():
-                param.grad = None  
-            torch.cuda.empty_cache() 
-            
-        elif self.args.gradweight_module_masking:
-            true_masking_prob = self.args.masking_prob
-            logger.info(f"true masking prob: {true_masking_prob}")
+            gradweight_whole_masking = GradWeightWholeMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=self.args.masking_prob) 
+        
+        elif self.args.gradient_entropy_masking:
             gradients = self.backward_qv_pass()
-            # gradients = self.backward_select_pass()
-            # gradients = self.scl_backward_pass()
-            grad_weight_masking = GradWeightModuleMasking(self.model, gradients=gradients, weights=self.pretrained_weights, masking_prob=true_masking_prob)
+            gradient_entropy_masking = GradientEntropyMasking(self.model, gradients=gradients, weights=self.pretrained_weights, masking_prob=self.args.masking_prob) 
+        
+        elif self.args.fft:
             for param in self.model.parameters():
-                param.grad = None  
-            torch.cuda.empty_cache()  
+                param.requires_grad = True
+            return
             
-        elif self.args.gradweight_prune_masking:
-            mask_mode = 'gradient'
-            # mask_mode = 'gradweight'
-            true_masking_prob = convert_masking_prob(self.args.model_name, self.args.masking_prob)
-            logger.info(f"true masking prob: {true_masking_prob}")
-            # gradients = self.backward_qv_pass()
-            # gradients = self.backward_select_pass()
-            gradients = self.scl_backward_pass()
-            grad_weight_masking = GradWeightPruneMasking(self.model, mask_mode=mask_mode, gradients=gradients, weights=self.pretrained_weights, masking_prob=true_masking_prob, prune_prob=self.args.prune_prob)
-            grad_weight_masking.apply_grad_weight_masking()
-            for param in self.model.parameters():
-                param.grad = None  
-            torch.cuda.empty_cache()  
+            
+        self.model.zero_grad()
+        torch.cuda.empty_cache()  
         
             
         # Calculate tunable parameter percentage
@@ -552,7 +386,6 @@ class Framework:
             percentage = (trainable_params / total_params) * 100
             print(f'\ntrainable params:{total_params}, total params:{trainable_params}, percentage:{percentage}%\n')
 
-            
 
     def forward(self, input_ids, attention_masks=None, option_len=None, generation=False, batch_size=None,
                 num_of_candidates_arr=None):
@@ -700,6 +533,7 @@ class Framework:
 
         return metrics
 
+
     def train(self, train_samples, eval_samples):
         """
         Training function
@@ -771,7 +605,14 @@ class Framework:
             data_collator=DataCollatorWithPaddingAndNesting(self.tokenizer,
                                                             pad_to_multiple_of=8) if self.args.train_as_classification else collator(
                 self.tokenizer, pad_to_multiple_of=8),
-            callbacks=[EmptyCacheCallback()]
+            callbacks=[
+                EmptyCacheCallback(),
+                # SaveWeightForSVDCallback(
+                #     save_epochs=[5, 10, 15, 20],
+                #     layer_keywords = ['q_proj', 'v_proj'],
+                #     save_dir="svd_weights"
+                # )
+            ]
         )
         
         #if self.args.save_on_interrupt:

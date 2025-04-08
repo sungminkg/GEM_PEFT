@@ -12,9 +12,24 @@ EPOCH=${EPOCH:-5}
 BS=${BS:-8}
 LR=${LR:-1e-5}
 SEED=${SEED:-0}
-TRAIN=${TRAIN:-1000}
-DEV=${DEV:-500}
+
+
+# RTE:      Total 2490    -> $TRAIN = 2241,   $DEV = 249     epoch 20
+# SST2:     Total 67349   -> $TRAIN = 60614,  $DEV = 6735    epoch 7
+# WSC:      Total 554     -> $TRAIN = 498,    $DEV = 56      epoch 20
+# WIC:      Total 5428    -> $TRAIN = 4885,   $DEV = 543     epoch 20
+# CB:       Total 250     -> $TRAIN = 225,    $DEV = 25      epoch 20
+# BoolQ:    Total 9427    -> $TRAIN = 8484,   $DEV = 943     epoch 10
+# MultiRC:  Total 27243   -> $TRAIN = 24518,  $DEV = 2725    epoch 10
+# Copa:     Total 400     -> $TRAIN = 360,    $DEV = 40      epoch 20
+# ReCoRD:   Total 100730  -> $TRAIN = 90657,  $DEV = 10073   epoch 7   # ⚠️ --train_as_classification ❌
+# SQuAD:    Total 85999   -> $TRAIN = 77399,  $DEV = 8600    epoch 7   # ⚠️ --train_as_classification ❌
+# DROP:     Total 77400   -> $TRAIN = 69660,  $DEV = 7740    epoch 7   # ⚠️ --train_as_classification ❌
+TRAIN=${TRAIN:-360}   
+DEV=${DEV:-40}       
 EVAL=${EVAL:-1000}
+
+
 LOCAL_HOST=${LOCAL_HOST:-3}
 DS_CONFIG=${DS_CONFIG:-"ds_config_zero2.json"}
 
@@ -109,12 +124,15 @@ esac
 
 TAG="$MODE-$LR-$SEED"
 
+
+
+#--- for RTE, SST2, WSC, WIC, CB, BoolQ, MultiRC, Copa
 deepspeed --master_port $port --include localhost:$LOCAL_HOST run2.py --deepspeed "$DS_CONFIG" \
   --overwrite_output_dir \
   --model_name $MODEL \
   --task_name $TASK \
   --output_dir ./saved_models/$TASK-${MODEL_NAME}-$TAG\
-  --tag $TAG --train_set_seed $SEED --num_train $TRAIN --num_dev $DEV --num_eval $EVAL --logging_steps 10 \
+  --tag $TAG --train_set_seed $SEED --num_train $TRAIN --num_dev $DEV --logging_steps 10 \
   --learning_rate $LR --num_train_epochs $EPOCH --per_device_train_batch_size $BS \
   --load_best_model_at_end --evaluation_strategy epoch --save_strategy epoch --save_total_limit 1 \
   --train_as_classification \
@@ -122,4 +140,19 @@ deepspeed --master_port $port --include localhost:$LOCAL_HOST run2.py --deepspee
   $TASK_ARGS \
   "$@"
 
+
+#--- for ReCoRD, SQuAD, DROP
+# deepspeed --master_port $port --include localhost:$LOCAL_HOST run2.py --deepspeed "$DS_CONFIG" \
+#   --overwrite_output_dir \
+#   --model_name $MODEL \
+#   --task_name $TASK \
+#   --output_dir ./saved_models/$TASK-${MODEL_NAME}-$TAG\
+#   --tag $TAG --train_set_seed $SEED --num_train $TRAIN --num_dev $DEV --logging_steps 10 \
+#   --learning_rate $LR --num_train_epochs $EPOCH --per_device_train_batch_size $BS \
+#   --load_best_model_at_end --evaluation_strategy epoch --save_strategy epoch --save_total_limit 1 \
+#   $EXTRA_ARGS \
+#   $TASK_ARGS \
+#   "$@"
+
 # --bf16 \
+# --num_eval $EVAL -> excluded to use all or the evaluation dataset

@@ -179,7 +179,7 @@ class GradWeightlnSelectMaskingLinear(nn.Module):
             self.masking = torch.zeros_like(self.base_Linear.weight, dtype=self.base_Linear.weight.dtype, device=self.base_Linear.weight.device)
             return
 
-        importance_score = (grad_tensor / layer_grad_norm) / (weight_tensor / layer_weight_norm + 1e-8)  # (param_grad / layer_grad_norm) / (param_weight / layer_weight_norm)
+        importance_score = (grad_tensor / weight_tensor).abs()
         importance_scores_flat = importance_score.view(-1)
 
         k = min(n_tuning_params, importance_scores_flat.numel()) 
@@ -206,7 +206,7 @@ class GradWeightlnSelectMasking:
         self.linear_module_list = ['q_proj', 'v_proj']
         self.tunable_param_count = 0
         self.total_param_count = sum(p.numel() for p in model.parameters())
-        self.ratio_mode = 'temp_softmax'    # naive, temp_softmax
+        self.ratio_mode = 'naive'    # naive, temp_softmax
         self.temperature = 5
 
         # Replace specific modules with GradWeightMaskingLinear

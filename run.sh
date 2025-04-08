@@ -9,20 +9,18 @@ MODEL_NAME=(${MODEL//\// })
 MODEL_NAME="${MODEL_NAME[-1]}"
 
 EPOCH=${EPOCH:-5}
-BS=${BS:-1}
+BS=${BS:-8}
 LR=${LR:-1e-5}
 SEED=${SEED:-0}
 TRAIN=${TRAIN:-1000}
 DEV=${DEV:-500}
 EVAL=${EVAL:-1000}
-LOCAL_HOST=${LOCAL_HOST:-8}
-DS_CONFIG=${DS_CONFIG:-"ds_config_zero3.json"}
+LOCAL_HOST=${LOCAL_HOST:-0}
+DS_CONFIG=${DS_CONFIG:-"ds_config_zero2.json"}
 
 MODE=${MODE:-ft}
 EXTRA_ARGS=""
-if [ "$MODE" == "prefix" ]; then
-  EXTRA_ARGS="--prefix_tuning"
-elif [ "$MODE" == "lora" ]; then
+if [ "$MODE" == "lora" ]; then
   EXTRA_ARGS="--lora"
 elif [ "$MODE" == "adapter" ]; then
   EXTRA_ARGS="--adapter"
@@ -30,10 +28,6 @@ elif [ "$MODE" == "random_masking" ]; then
   MASKING_PROB=${MASKING_PROB:-0.0}
   MODE="random_masking_${MASKING_PROB}"
   EXTRA_ARGS="--random_masking --masking_prob $MASKING_PROB"
-elif [ "$MODE" == "structured_masking" ]; then
-  MASKING_PROB=${MASKING_PROB:-0.0}
-  MODE="structured_masking_${MASKING_PROB}"
-  EXTRA_ARGS="--structured_masking --masking_prob $MASKING_PROB"
 elif [ "$MODE" == "bitfit" ]; then
   EXTRA_ARGS="--bitfit"
 elif [ "$MODE" == "adalora" ]; then
@@ -66,23 +60,16 @@ elif [ "$MODE" == "entropy_gradweight_masking" ]; then
   MASKING_PROB=${MASKING_PROB:-0.0}
   MODE="entropy_gradweight_masking_${MASKING_PROB}"
   EXTRA_ARGS="--entropy_gradweight_masking --masking_prob $MASKING_PROB"
-elif [ "$MODE" == "gradweight_module_masking" ]; then
-  MASKING_PROB=${MASKING_PROB:-0.0}
-  MODE="gradweight_module_masking_${MASKING_PROB}"
-  EXTRA_ARGS="--gradweight_module_masking --masking_prob $MASKING_PROB"
 elif [ "$MODE" == "gradweight_whole_masking" ]; then
   MASKING_PROB=${MASKING_PROB:-0.0}
   MODE="gradweight_whole_masking_${MASKING_PROB}"
   EXTRA_ARGS="--gradweight_whole_masking --masking_prob $MASKING_PROB"
-elif [ "$MODE" == "gradweight_prune_masking" ]; then
+elif [ "$MODE" == "gradient_entropy_masking" ]; then
   MASKING_PROB=${MASKING_PROB:-0.0}
-  PRUNE_PROB=${PRUNE_PROB:-0.0}
-  MODE="gradweight_prune_masking_${MASKING_PROB}_${PRUNE_PROB}"
-  EXTRA_ARGS="--gradweight_prune_masking --masking_prob $MASKING_PROB --prune_prob $PRUNE_PROB"
-elif [ "$MODE" == "adapter_masking" ]; then
-  MASKING_PROB=${MASKING_PROB:-0.0}
-  MODE="adapter_masking_${MASKING_PROB}"
-  EXTRA_ARGS="--adapter_masking --masking_prob $MASKING_PROB"
+  MODE="gradient_entropy_masking_${MASKING_PROB}"
+  EXTRA_ARGS="--gradient_entropy_masking --masking_prob $MASKING_PROB"
+elif [ "$MODE" == "fft" ]; then
+  EXTRA_ARGS="--fft"
 fi
 
 port=$(shuf -i25000-30000 -n1)
@@ -122,7 +109,7 @@ esac
 
 TAG="$MODE-$LR-$SEED"
 
-deepspeed --master_port $port --include localhost:$LOCAL_HOST run2.py --deepspeed "$DS_CONFIG" \
+deepspeed --master_port $port --include localhost:$LOCAL_HOST run.py --deepspeed "$DS_CONFIG" \
   --overwrite_output_dir \
   --model_name $MODEL \
   --task_name $TASK \
@@ -131,9 +118,8 @@ deepspeed --master_port $port --include localhost:$LOCAL_HOST run2.py --deepspee
   --learning_rate $LR --num_train_epochs $EPOCH --per_device_train_batch_size $BS \
   --load_best_model_at_end --evaluation_strategy epoch --save_strategy epoch --save_total_limit 1 \
   --train_as_classification \
-  --fp16 \
   $EXTRA_ARGS \
   $TASK_ARGS \
   "$@"
 
-# --bf16 / --fp16 -> add in front of learning rate
+# --bf16 \
