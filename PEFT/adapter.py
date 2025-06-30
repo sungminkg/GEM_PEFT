@@ -1,7 +1,6 @@
 import logging
 import torch
 from torch import nn
-from torch.nn import functional as F
 import re
 
 logger = logging.getLogger(__name__)
@@ -9,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 def decoder_layer_forward_hook(self, *args, **kwargs):
     hidden_states = args[0]
+
     if len(args) >= 6 or any(k in kwargs for k in ["attention_mask", "layer_head_mask", "past_key_value"]):
         attention_mask = kwargs.get("attention_mask", args[1] if len(args) > 1 else None)
         layer_head_mask = kwargs.get("layer_head_mask", args[2] if len(args) > 2 else None)
@@ -18,133 +18,168 @@ def decoder_layer_forward_hook(self, *args, **kwargs):
     else:
         raise ValueError("decoder_layer_forward_hook: wrong number of arguments")
 
-    device = self.self_attn.out_proj.weight.device
+    device = self.self_attn_device
     hidden_states = hidden_states.to(device)
-
     residual = hidden_states
 
-    # 125m, 1.7B, ..., 175B applies layer norm BEFORE attention
-    if self.do_layer_norm_before:
-        hidden_states = self.self_attn_layer_norm(hidden_states)
+    if self.peft_model_type == "opt":
+        self_attn_norm = self.self_attn_layer_norm
+        final_norm = self.final_layer_norm
+        pre_norm = self.do_layer_norm_before
+    elif self.peft_model_type == "llama":
+        self_attn_norm = self.self_attn_layer_norm
+        final_norm = self.final_layer_norm
+        pre_norm = True
+    elif self.peft_model_type in ["phi", "phi-2", "microsoft_phi"]:
+        self_attn_norm = self.input_layernorm
+        final_norm = getattr(self, 'post_attention_layernorm', getattr(self, 'ffn_layernorm', None))
+        pre_norm = True
+    else:
+        raise ValueError("Unknown PEFT model type")
 
-    # Self Attention
-    hidden_states, self_attn_weights, present_key_value = self.self_attn(
-        hidden_states=hidden_states,
-        past_key_value=past_key_value,
-        attention_mask=attention_mask,
-        layer_head_mask=layer_head_mask,
-        output_attentions=output_attentions,
-    )
+    if pre_norm and self_attn_norm is not None:
+        hidden_states = self_attn_norm(hidden_states)
 
-    # add the adapter before dropout
+    if self.peft_model_type in ["phi", "phi-2", "microsoft_phi"]:
+        attn_outputs = self.self_attn(
+            hidden_states=hidden_states,
+            past_key_value=past_key_value,
+            attention_mask=attention_mask,
+            use_cache=use_cache,
+            **{k: v for k, v in kwargs.items() if k in ["position_ids"]}
+        )
+        if len(attn_outputs) == 2:
+            hidden_states, present_key_value = attn_outputs
+            self_attn_weights = None
+        elif len(attn_outputs) == 3:
+            hidden_states, self_attn_weights, present_key_value = attn_outputs
+        else:
+            raise ValueError("Unexpected number of outputs from self.self_attn for Phi model")
+    else:
+        hidden_states, self_attn_weights, present_key_value = self.self_attn(
+            hidden_states=hidden_states,
+            past_key_value=past_key_value,
+            attention_mask=attention_mask,
+            layer_head_mask=layer_head_mask,
+            output_attentions=output_attentions,
+        )
+
+    if hasattr(self, "dropout") and hasattr(self.dropout, 'p'):
+        dropout_p = self.dropout.p
+    elif hasattr(self, "resid_dropout") and hasattr(self.resid_dropout, 'p'):
+        dropout_p = self.resid_dropout.p
+    elif hasattr(self, "config") and hasattr(self.config, "hidden_dropout"):
+        dropout_p = self.config.hidden_dropout
+    else:
+        dropout_p = 0.0
+
     hidden_states = self.adapter1(hidden_states) + hidden_states
-
-    hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-
-    # # add the adapter after dropout
-    # hidden_states = self.adapter1(hidden_states)+hidden_states
-
+    hidden_states = nn.functional.dropout(hidden_states, p=dropout_p, training=self.training)
     hidden_states = residual + hidden_states
 
-    # 350m applies layer norm AFTER attention
-    if not self.do_layer_norm_before:
-        hidden_states = self.self_attn_layer_norm(hidden_states)
+    if not pre_norm and self_attn_norm is not None:
+        hidden_states = self_attn_norm(hidden_states)
 
-    # Fully Connected
     hidden_states_shape = hidden_states.shape
     hidden_states = hidden_states.reshape(-1, hidden_states.size(-1))
     residual = hidden_states
 
-    # 125m, 1.7B, ..., 175B applies layer norm BEFORE attention
-    if self.do_layer_norm_before:
-        hidden_states = self.final_layer_norm(hidden_states)
+    if pre_norm and final_norm is not None:
+        hidden_states = final_norm(hidden_states)
 
-    hidden_states = self.fc1(hidden_states)
-    hidden_states = self.activation_fn(hidden_states)
+    # FFN 분기
+    if hasattr(self, 'ffn'):  # phi 모델
+        hidden_states = self.ffn(hidden_states)
+        hidden_states = self.adapter2(hidden_states) + hidden_states  # <-- 핵심 수정: residual 다시 안 더함
+    elif hasattr(self, 'mlp'):  # 혹시 mlp 구조로 있는 경우
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = self.adapter2(hidden_states) + hidden_states
+    else:  # opt, llama
+        hidden_states = self.fc1(hidden_states)
+        hidden_states = self.activation_fn(hidden_states)
+        hidden_states = self.fc2(hidden_states)
+        hidden_states = self.adapter2(hidden_states) + hidden_states
 
-    hidden_states = self.fc2(hidden_states)
-
-    # add the adapter before dropout
-    hidden_states = self.adapter2(hidden_states) + hidden_states
-
-    hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-
-    # # add the adapter after dropout
-    # hidden_states = self.adapter2(hidden_states)+hidden_states
-
+    hidden_states = nn.functional.dropout(hidden_states, p=dropout_p, training=self.training)
     hidden_states = (residual + hidden_states).view(hidden_states_shape)
 
-    # 350m applies layer norm AFTER attention
-    if not self.do_layer_norm_before:
-        hidden_states = self.final_layer_norm(hidden_states)
+    if not pre_norm and final_norm is not None:
+        hidden_states = final_norm(hidden_states)
 
     outputs = (hidden_states,)
-
     if output_attentions:
         outputs += (self_attn_weights,)
-
     if use_cache:
         outputs += (present_key_value,)
-
     return outputs
 
 
 class Adapter:
-
     def __init__(self, model, r, act_type="relu"):
-        """
-        Input:
-        r: size of hidden layer
-        """
-
         self.model = model
-        self.hidden_dim = model.config.hidden_size
         self.r = r
 
-        assert (model.config.model_type == "opt")
+        model_type = model.config.model_type.lower()
+        assert model_type in ["opt", "llama", "phi", "phi-2", "microsoft_phi"]
+
+        pattern = r'^model\.decoder\.layers\.\d+$' if model_type == "opt" else r'^model\.layers\.\d+$'
+        act_fn_dict = {
+            "None": nn.Identity(),
+            "relu": nn.ReLU(),
+            "gelu": nn.GELU(),
+            "tanh": nn.Tanh()
+        }
+        act_fn = act_fn_dict[act_type]
+
+        # 우선 모든 injection 작업을 기록만 해둠
+        adapter_modules_to_register = []
 
         for name, module in model.named_modules():
-            pattern = r'^model\.decoder\.layers\.\d+$'
             if re.match(pattern, name):
-                device = module.self_attn.out_proj.weight.device
-                embed_dim = module.embed_dim
+                if model_type == "opt":
+                    out_proj_module = module.self_attn.out_proj
+                elif model_type == "llama":
+                    out_proj_module = module.self_attn.o_proj
+                elif model_type in ["phi", "phi-2", "microsoft_phi"]:
+                    out_proj_module = module.self_attn.dense
+                else:
+                    raise ValueError("Unsupported model type.")
 
-                logger.info("inject adapter to {}".format(name))
+                device = out_proj_module.weight.device
+                embed_dim = out_proj_module.in_features
 
-                if act_type == "None":
-                    act_fn = nn.Identity()
-                elif act_type == "relu":
-                    act_fn = nn.ReLU()
-                elif act_type == "gelu":
-                    act_fn = nn.GELU()
-                elif act_type == "tanh":
-                    act_fn = nn.Tanh()
+                logger.info(f"Inject adapter to {name}")
+                module.peft_model_type = model_type
 
                 module.adapter1 = nn.Sequential(
-                    nn.Linear(embed_dim, r),
+                    nn.Linear(embed_dim, r, device=device, dtype=out_proj_module.weight.dtype),
                     act_fn,
-                    nn.Linear(r, embed_dim)
-                ).to(device)
-
+                    nn.Linear(r, embed_dim, device=device, dtype=out_proj_module.weight.dtype)
+                )
                 module.adapter2 = nn.Sequential(
-                    nn.Linear(embed_dim, r),
+                    nn.Linear(embed_dim, r, device=device, dtype=out_proj_module.weight.dtype),
                     act_fn,
-                    nn.Linear(r, embed_dim)
-                ).to(device)
+                    nn.Linear(r, embed_dim, device=device, dtype=out_proj_module.weight.dtype)
+                )
 
-                if act_type == None:
-                    nn.init.zeros_(module.adapter1[1].weight)
-                    nn.init.zeros_(module.adapter1[1].bias)
-                    nn.init.zeros_(module.adapter2[1].weight)
-                    nn.init.zeros_(module.adapter2[1].bias)
-                else:
-                    nn.init.zeros_(module.adapter1[2].weight)
-                    nn.init.zeros_(module.adapter1[2].bias)
-                    nn.init.zeros_(module.adapter2[2].weight)
-                    nn.init.zeros_(module.adapter2[2].bias)
+                nn.init.zeros_(module.adapter1[2].weight)
+                nn.init.zeros_(module.adapter1[2].bias)
+                nn.init.zeros_(module.adapter2[2].weight)
+                nn.init.zeros_(module.adapter2[2].bias)
 
+                module.self_attn_device = device
                 module.forward = decoder_layer_forward_hook.__get__(module, type(module))
 
+                # 나중에 등록할 adapter 모듈 기록
+                adapter_modules_to_register.append( (name, module) )
+        
         for name, param in model.named_parameters():
-            if "adapter" not in name:
+            if "adapter" in name:
+                param.requires_grad = True
+            else:
                 param.requires_grad = False
+
+        # named_modules 순회 끝난 후 attribute 등록 (안전)
+        for name, module in adapter_modules_to_register:
+            setattr(self.model, f"{name.replace('.', '_')}_adapter1", module.adapter1)
+            setattr(self.model, f"{name.replace('.', '_')}_adapter2", module.adapter2)

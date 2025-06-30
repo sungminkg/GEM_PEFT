@@ -101,7 +101,7 @@ class LoRA:
             attention_name = "attn"
         elif model.config.model_type == "roberta":
             attention_name = "attention"
-        elif model.config.model_type == "llama":
+        elif model.config.model_type in ["llama", "phi"]:
             attention_name = "self_attn"
         else:
             raise NotImplementedError

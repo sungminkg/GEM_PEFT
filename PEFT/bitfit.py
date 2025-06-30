@@ -42,8 +42,10 @@ class BitfitLinear(torch.nn.Module):
 class Bitfit:
     def __init__(self, model):
         self.model = model
-        if self.model.config.model_type == "opt":
+        if self.model.config.model_type in ["opt"]:
             linear_module_list = ['k_proj', 'q_proj', 'v_proj', 'out_proj', 'fc1', 'fc2']
+        elif self.model.config.model_type in ["llama", "phi", "microsoft_phi", "phi-2"]:
+            linear_module_list = ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
         else:
             raise NotImplementedError
 

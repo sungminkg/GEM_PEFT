@@ -175,6 +175,8 @@ class GradWeightlnSelectMaskingLinear(nn.Module):
 
     def apply_mask(self, mask_mode, grad_tensor: torch.Tensor, weight_tensor: torch.Tensor, 
                 layer_grad_norm: torch.Tensor, layer_weight_norm: torch.Tensor, n_tuning_params): 
+        grad_tensor = grad_tensor.to(self.base_Linear.weight.device)
+        weight_tensor = weight_tensor.to(self.base_Linear.weight.device)
         if n_tuning_params <= 0:
             self.masking = torch.zeros_like(self.base_Linear.weight, dtype=self.base_Linear.weight.dtype, device=self.base_Linear.weight.device)
             return
@@ -256,6 +258,10 @@ class GradWeightlnSelectMasking:
                 weight_key = self._normalize_key(name + ".weight")
                 grad_tensor = self.gradients.get(grad_key, None)
                 weight_tensor = self.weights.get(weight_key, None)
+                if grad_tensor is not None:
+                    grad_tensor = grad_tensor.to(self.model.device)
+                if weight_tensor is not None:
+                    weight_tensor = weight_tensor.to(self.model.device)
 
                 if grad_tensor is not None and weight_tensor is not None:
                     if  torch.isnan(grad_tensor).any() or torch.isinf(grad_tensor).any():
@@ -291,6 +297,10 @@ class GradWeightlnSelectMasking:
 
                 grad_tensor = self.gradients.get(grad_key, None)
                 weight_tensor = self.weights.get(weight_key, None)
+                if grad_tensor is not None:
+                    grad_tensor = grad_tensor.to(self.model.device)
+                if weight_tensor is not None:
+                    weight_tensor = weight_tensor.to(self.model.device)
 
                 if grad_tensor is not None and weight_tensor is not None:
                     logger.info(f"\n--------Applying mask to layer: {name}------------")

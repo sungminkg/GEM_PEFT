@@ -210,14 +210,14 @@ def encode_prompt_train(task, template, train_samples, eval_sample, tokenizer, m
     if any([len(encoding) > max_length for encoding in encodings]):
         logger.warn("Exceed max length")
         
-    if tokenizer.add_bos_token:
-        encodings = [encoding[0:1] + encoding[1:][-(max_length - 1):] for encoding in encodings]
-    else:
-        encodings = [encoding[-max_length:] for encoding in encodings]
-    # if hasattr(tokenizer, 'add_bos_token') and tokenizer.add_bos_token:
+    # if tokenizer.add_bos_token:
     #     encodings = [encoding[0:1] + encoding[1:][-(max_length - 1):] for encoding in encodings]
     # else:
     #     encodings = [encoding[-max_length:] for encoding in encodings]
+    if hasattr(tokenizer, 'add_bos_token') and tokenizer.add_bos_token:
+        encodings = [encoding[0:1] + encoding[1:][-(max_length - 1):] for encoding in encodings]
+    else:
+        encodings = [encoding[-max_length:] for encoding in encodings]
 
     return encodings, option_lens
 
@@ -280,10 +280,14 @@ def encode_prompt_eval(task, template, eval_samples, tokenizer, max_length, sfc=
     if any([len(encoding) > max_length for encoding in encodings]):
         logger.warn("Exceed max length")
 
-    if tokenizer.add_bos_token:
+    if hasattr(tokenizer, 'add_bos_token') and tokenizer.add_bos_token:
         encodings = [encoding[0:1] + encoding[1:][-(max_length - 1):] for encoding in encodings]
     else:
         encodings = [encoding[-max_length:] for encoding in encodings]
+    # if tokenizer.add_bos_token:
+    #     encodings = [encoding[0:1] + encoding[1:][-(max_length - 1):] for encoding in encodings]
+    # else:
+    #     encodings = [encoding[-max_length:] for encoding in encodings]
 
     return encodings, attention_masks, option_lens
 

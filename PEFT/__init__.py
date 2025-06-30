@@ -1,6 +1,7 @@
 from .adapter import Adapter
 from .bitfit import Bitfit
 from .lora import LoRA
+from .adalora import AdaLoRA, AdaLoRALinear
 from .prefix import PrefixTuning
 # from .random_masking import RandomMasking
 from .random_masking_naive import RandomMasking

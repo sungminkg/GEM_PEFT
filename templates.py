@@ -377,3 +377,25 @@ class DROPTemplate(Template):
 
     def verbalize_sfc(self, sample, candidate):
         raise NotImplementedError
+
+
+
+class MNLITemplate(Template):
+    # standard GLUE-style verbalizer
+    verbalizer = {0: "Yes", 1: "Maybe", 2: "No"}  # entailment, neutral, contradiction
+
+    def encode(self, sample):
+        premise = sample.data['premise']
+        hypothesis = sample.data['hypothesis']
+        return f"Premise: {premise}\nHypothesis: {hypothesis}\nCan we infer the hypothesis from the premise? Yes, No, or Maybe?"
+
+    def verbalize(self, sample, candidate):
+        premise = sample.data['premise']
+        hypothesis = sample.data['hypothesis']
+        return f"Premise: {premise}\nHypothesis: {hypothesis}\nCan we infer the hypothesis from the premise? Yes, No, or Maybe?\n{self.verbalizer[candidate]}"
+
+    def encode_sfc(self, sample):
+        return ""
+
+    def verbalize_sfc(self, sample, candidate):
+        return self.verbalizer[candidate]
