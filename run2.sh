@@ -13,7 +13,7 @@ BS=${BS:-8}
 LR=${LR:-1e-5}
 SEED=${SEED:-0}
 
-
+# Full Dataset usage
 # RTE:      Total 2490    -> $TRAIN = 2241,   $DEV = 249     epoch 20
 # SST2:     Total 67349   -> $TRAIN = 60614,  $DEV = 6735    epoch 7
 # WSC:      Total 554     -> $TRAIN = 498,    $DEV = 56      epoch 20
@@ -23,10 +23,27 @@ SEED=${SEED:-0}
 # MultiRC:  Total 27243   -> $TRAIN = 24518,  $DEV = 2725    epoch 10
 # Copa:     Total 400     -> $TRAIN = 360,    $DEV = 40      epoch 20
 # ReCoRD:   Total 100730  -> $TRAIN = 90657,  $DEV = 10073   epoch 7   # ⚠️ --train_as_classification ❌
-# SQuAD:    Total 85999   -> $TRAIN = 77399,  $DEV = 8600    epoch 7   # ⚠️ --train_as_classification ❌
+# SQuAD:    Total 85999   -> $TRAIN = 77399,  $DEV = 8600    epoch 5   # ⚠️ --train_as_classification ❌
 # DROP:     Total 77400   -> $TRAIN = 69660,  $DEV = 7740    epoch 7   # ⚠️ --train_as_classification ❌
-TRAIN=${TRAIN:-360}   
-DEV=${DEV:-40}       
+# GSM8k:    Total         -> $TRAIN = 7473,   $DEV = 1319    epoch 7
+
+# Dataset usage - max(10%, 1000/500/1000) - paper experiment (batch=8)
+# RTE:      → $TRAIN = 1000,   $DEV = 500,   $EVAL = 1000    epoch 10
+# SST2:     → $TRAIN = 6060,   $DEV = 675,   $EVAL = 1000    epoch 7
+# WSC:      → $TRAIN = 1000,   $DEV = 500,   $EVAL = 1000    epoch 10 - skip?
+# WIC:      → $TRAIN = 1000,   $DEV = 500,   $EVAL = 1000    epoch 10
+# CB:       → $TRAIN = 1000,   $DEV = 500,   $EVAL = 1000    epoch 10 - skip?
+# BoolQ:    → $TRAIN = 1000,   $DEV = 500,   $EVAL = 1000    epoch 10
+# MultiRC:  → $TRAIN = 1000,   $DEV = 500,   $EVAL = 1000    epoch 10
+# Copa:     → $TRAIN = 360,    $DEV = 40,   $EVAL = 1000     epoch 10
+# MNLI:     → $TRAIN = 10000,  $DEV = 4363,  $EVAL = 1000    epoch 5
+# RTE:      → $TRAIN = 1000,   $DEV = 500,   $EVAL = 1000    epoch 10
+# ReCoRD:   → $TRAIN = 9065,   $DEV = 1000,  $EVAL = 1000    epoch 7   # ⚠️ --train_as_classification ❌
+# SQuAD:    → $TRAIN = 7740,   $DEV = 860,   $EVAL = 1000    epoch 7   # ⚠️ --train_as_classification ❌
+# DROP:     → $TRAIN = 7000,   $DEV = 770,   $EVAL = 1000    epoch 7   # ⚠️ --train_as_classification ❌
+
+TRAIN=${TRAIN:-6060}   
+DEV=${DEV:-675}       
 EVAL=${EVAL:-1000}
 
 
@@ -126,12 +143,12 @@ TAG="$MODE-$LR-$SEED"
 
 
 
-#--- for RTE, SST2, WSC, WIC, CB, BoolQ, MultiRC, Copa
+#--- for RTE, SST2, WSC, WIC, CB, BoolQ, MultiRC, Copa, GSM8k
 deepspeed --master_port $port --include localhost:$LOCAL_HOST run2.py --deepspeed "$DS_CONFIG" \
   --overwrite_output_dir \
   --model_name $MODEL \
   --task_name $TASK \
-  --output_dir ./saved_models/$TASK-${MODEL_NAME}-$TAG\
+  --output_dir=/vault/tmp/saved_models/${TASK}-${MODEL_NAME}-${TAG}\
   --tag $TAG --train_set_seed $SEED --num_train $TRAIN --num_dev $DEV --logging_steps 10 \
   --learning_rate $LR --num_train_epochs $EPOCH --per_device_train_batch_size $BS \
   --load_best_model_at_end --evaluation_strategy epoch --save_strategy epoch --save_total_limit 1 \
@@ -142,11 +159,12 @@ deepspeed --master_port $port --include localhost:$LOCAL_HOST run2.py --deepspee
 
 
 #--- for ReCoRD, SQuAD, DROP
+# --output_dir ./saved_models/$TASK-${MODEL_NAME}-$TAG\
 # deepspeed --master_port $port --include localhost:$LOCAL_HOST run2.py --deepspeed "$DS_CONFIG" \
 #   --overwrite_output_dir \
 #   --model_name $MODEL \
 #   --task_name $TASK \
-#   --output_dir ./saved_models/$TASK-${MODEL_NAME}-$TAG\
+#   --output_dir=/vault/tmp/saved_models/${TASK}-${MODEL_NAME}-${TAG}\
 #   --tag $TAG --train_set_seed $SEED --num_train $TRAIN --num_dev $DEV --logging_steps 10 \
 #   --learning_rate $LR --num_train_epochs $EPOCH --per_device_train_batch_size $BS \
 #   --load_best_model_at_end --evaluation_strategy epoch --save_strategy epoch --save_total_limit 1 \
