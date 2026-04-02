@@ -75,35 +75,16 @@ OLD_BS=${BS}
 TASK_ARGS=()
 
 case "${TASK}" in
-  CB)
-    DEV=50
-    BS=4
-    GA=$((OLD_BS / BS))
-    TASK_ARGS+=(--gradient_accumulation_steps "${GA}")
-    ;;
-  WSC)
-    DEV=50
-    ;;
   MultiRC)
     BS=2
     GA=$((OLD_BS / BS))
     TASK_ARGS+=(--gradient_accumulation_steps "${GA}")
     ;;
-  ReCoRD)
-    BS=1
-    GA=$((OLD_BS / BS))
-    TASK_ARGS+=(--gradient_accumulation_steps "${GA}" --train_as_classification False --eval_batch_size 1)
-    ;;
-  DROP)
-    BS=1
-    GA=$((OLD_BS / BS))
-    TASK_ARGS+=(--gradient_accumulation_steps "${GA}" --train_as_classification False)
-    ;;
 esac
 
 TRAIN_ARGS=()
 case "${TASK}" in
-  RTE|SST2|WSC|WIC|CB|BoolQ|MultiRC|Copa)
+  RTE|SST2|WIC|BoolQ|MultiRC|Copa)
     TRAIN_ARGS+=(--train_as_classification)
     ;;
 esac

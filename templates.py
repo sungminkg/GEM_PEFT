@@ -195,27 +195,6 @@ class MultiRCTemplate(Template):
         return self.verbalizer[candidate]
 
     
-class CBTemplate(Template):
-    # From PromptSource 1
-    verbalizer = {0: "Yes", 1: "No", 2: "Maybe"}
-
-    def encode(self, sample):
-        premise = sample.data["premise"]
-        hypothesis = sample.data["hypothesis"]
-        return f"Suppose {premise} Can we infer that \"{hypothesis}\"? Yes, No, or Maybe?\n"
-
-    def verbalize(self, sample, candidate):
-        premise = sample.data["premise"]
-        hypothesis = sample.data["hypothesis"]
-        return f"Suppose {premise} Can we infer that \"{hypothesis}\"? Yes, No, or Maybe?\n{self.verbalizer[candidate]}"
-
-    def encode_sfc(self, sample):
-        return ""
-
-    def verbalize_sfc(self, sample, candidate):
-        return self.verbalizer[candidate]
-
-
 class WICTemplate(Template):
     # From PromptSource 1
     verbalizer = {0: "No", 1: "Yes"}
@@ -237,73 +216,6 @@ class WICTemplate(Template):
 
     def verbalize_sfc(self, sample, candidate):
         return self.verbalizer[candidate]
-
-
-class WSCTemplate(Template):
-    # From PromptSource 1
-    verbalizer = {0: "No", 1: "Yes"}
-
-    def encode(self, sample):
-        text = sample.data['text']
-        span1 = sample.data['span1_text']
-        span2 = sample.data['span2_text']
-        return f"{text}\nIn the previous sentence, does the pronoun \"{span2.lower()}\" refer to {span1}? Yes or No?\n"
-
-    def verbalize(self, sample, candidate):
-        text = sample.data['text']
-        span1 = sample.data['span1_text']
-        span2 = sample.data['span2_text']
-        return f"{text}\nIn the previous sentence, does the pronoun \"{span2.lower()}\" refer to {span1}? Yes or No?\n{self.verbalizer[candidate]}"
-
-    def encode_sfc(self, sample):
-        return ""
-
-    def verbalize_sfc(self, sample, candidate):
-        return self.verbalizer[candidate]
-
-
-class ReCoRDTemplate(Template):
-    # From PromptSource 1 but modified
-
-    def encode(self, sample):
-        passage = sample.data['passage']
-        query = sample.data['query']
-        return f"{passage}\n{query}\nQuestion: what is the \"@placeholder\"\nAnswer:"
-
-    def verbalize(self, sample, candidate):
-        passage = sample.data['passage']
-        query = sample.data['query']
-        return f"{passage}\n{query}\nQuestion: what is the \"@placeholder\"\nAnswer: {candidate}"
-
-    def encode_sfc(self, sample):
-        return "Answer:"
-
-    def verbalize_sfc(self, sample, candidate):
-        return f"Answer: {candidate}"
-
-
-class ReCoRDTemplateGPT3(Template):
-    # From PromptSource 1 but modified
-
-    def encode(self, sample):
-        passage = sample.data['passage'].replace("@highlight\n", "- ")
-        return f"{passage}\n-"
-
-    def verbalize(self, sample, candidate):
-        passage = sample.data['passage'].replace("@highlight\n", "- ")
-        query = sample.data['query'].replace("@placeholder", candidate[0] if isinstance(candidate, list) else candidate)
-        return f"{passage}\n- {query}"
-
-        # passage = sample.data['passage']
-        # query = sample.data['query']
-        # return f"{passage}\n{query}\nQuestion: what is the \"@placeholder\"\nAnswer: {candidate}"
-
-    def encode_sfc(self, sample):
-        return "-"
-
-    def verbalize_sfc(self, sample, candidate):
-        query = sample.data['query'].replace("@placeholder", candidate[0] if isinstance(candidate, list) else candidate)
-        return f"- {query}"
 
 
 class RTETemplate(Template):
@@ -351,27 +263,3 @@ class SQuADv2Template(Template):
     def verbalize_sfc(self, sample, candidate):
         raise NotImplementedError
 
-
-class DROPTemplate(Template):
-
-    def encode(self, sample):
-        question = sample.data['question'].strip()
-        # title = sample.data['title']
-        context = sample.data['context']
-
-        return f"Passage: {context}\nQuestion: {question}\nAnswer:"
-
-    def verbalize(self, sample, candidate):
-        question = sample.data['question'].strip()
-        # title = sample.data['title']
-        context = sample.data['context']
-        answer = sample.data['answers'][0] # there are multiple answers. for the prompt we only take the first one
-
-        return f"Passage: {context}\nQuestion: {question}\nAnswer: {answer}\n"
-
-    
-    def encode_sfc(self, sample):
-        raise NotImplementedError
-
-    def verbalize_sfc(self, sample, candidate):
-        raise NotImplementedError

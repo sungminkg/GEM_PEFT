@@ -1,5 +1,7 @@
 # GEM: A Scale-Aware and Distribution-Sensitive Sparse Fine-Tuning Framework for Effective Downstream Adaptation (AAAI-26 Main)
 
+Official paper link: [https://ojs.aaai.org/index.php/AAAI/article/view/39410](https://ojs.aaai.org/index.php/AAAI/article/view/39410)
+
 This repository contains the experimental training and evaluation code used during the development of **GEM: A Scale-Aware and Distribution-Sensitive Sparse Fine-Tuning Framework for Effective Downstream Adaptation**, accepted to the AAAI 2026 main conference.
 
 ![GEM overview](GEM.png)
@@ -49,17 +51,13 @@ Implemented task loaders currently include:
 
 - `SST2`
 - `RTE`
-- `CB`
 - `BoolQ`
-- `WSC`
 - `WIC`
 - `MultiRC`
 - `Copa`
-- `ReCoRD`
 - `SQuAD`
-- `DROP`
 
-Classification-style tasks use the standard evaluation path, while `SQuAD` and `DROP` use generative evaluation with F1.
+Classification-style tasks use the standard evaluation path, while `SQuAD` uses generative evaluation with F1.
 
 ## Supported Modes
 
@@ -109,8 +107,6 @@ You can override these with environment variables such as `OUTPUT_ROOT`, `RESULT
 
 
 ## Citation
-
-Official AAAI page: [https://ojs.aaai.org/index.php/AAAI/article/view/39410](https://ojs.aaai.org/index.php/AAAI/article/view/39410)
 
 ```bibtex
 @article{Kang_Kim_Avestimehr_Lee_2026, title={GEM: A Scale-Aware and Distribution-Sensitive Sparse Fine-Tuning Framework for Effective Downstream Adaptation}, volume={40}, url={https://ojs.aaai.org/index.php/AAAI/article/view/39410}, DOI={10.1609/aaai.v40i27.39410}, abstractNote={Parameter-efficient fine-tuning (PEFT) has become a popular way to adapt large pre-trained models to new tasks. Most PEFT methods update only a small subset of parameters while freezing the rest, avoiding redundant computation. As they maximize the absolute size of the updates without regard to the parameters’ original scale, the resulting changes in model behavior can be minimal. In contrast, we maximize updates relative to each parameter’s scale, yielding more meaningful downstream adaptation. We propose Gradient-to-Weight Ratio and Entropy-guided Masking (GEM), a parameter scale-aware, distribution-sensitive sparse fine-tuning framework. GEM prioritizes parameters whose updates are significant in proportion to their initial pre-trained values. It also adaptively determines how many parameters to tune at each layer based on the entropy of parameter values, thereby making the most effective use of the computational budget in PEFT. Our empirical study demonstrates the efficacy of GEM on both general-domain tasks (GLUE and SuperGLUE) and domain-specific tasks (GSM8k and MBPP), achieving up to a 1.6% improvement in fine-tuning accuracy over full fine-tuning while updating only 0.1% of model parameters.}, number={27}, journal={Proceedings of the AAAI Conference on Artificial Intelligence}, author={Kang, Sungmin and Kim, Jisoo and Avestimehr, Salman and Lee, Sunwoo}, year={2026}, month={Mar.}, pages={22509-22517} }

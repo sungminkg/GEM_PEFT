@@ -10,17 +10,13 @@ from templates import (
     BoolQTemplate,
     BoolQTemplateV2,
     BoolQTemplateV3,
-    CBTemplate,
     CopaTemplate,
-    DROPTemplate,
     MultiRCTemplate,
     RTETemplate,
-    ReCoRDTemplateGPT3,
     SST2Template,
     SQuADv2Template,
     Template,
     WICTemplate,
-    WSCTemplate,
 )
 from utils import temp_seed
 
@@ -228,34 +224,6 @@ class MultiRCDataset(Dataset):
         return {0: MultiRCTemplate}[template_version]()
 
 
-class CBDataset(Dataset):
-
-    def __init__(self, subtask=None, **kwargs) -> None:
-        self.load_dataset(subtask, **kwargs)
-
-    def load_dataset(self, path, **kwargs):
-        d = load_dataset("super_glue", "cb")
-        train_set = d["train"]
-        valid_set = d["validation"]
-
-        train_samples = [self.build_sample(example) for example in train_set]
-        valid_samples = [self.build_sample(example) for example in valid_set]
-        self.samples = {"train": train_samples, "valid": valid_samples}
-
-    def build_sample(self, example):
-        sample = \
-            Sample(
-                data=example,
-                candidates=[0, 1, 2],
-                correct_candidate=example['label']
-            )
-
-        return sample
-
-    def get_template(self, template_version=0):
-        return {0: CBTemplate}[template_version]()
-
-
 class WICDataset(Dataset):
 
     def __init__(self, subtask=None, **kwargs) -> None:
@@ -282,62 +250,6 @@ class WICDataset(Dataset):
 
     def get_template(self, template_version=0):
         return {0: WICTemplate}[template_version]()
-
-
-class WSCDataset(Dataset):
-
-    def __init__(self, subtask=None, **kwargs) -> None:
-        self.load_dataset(subtask, **kwargs)
-
-    def load_dataset(self, path, **kwargs):
-        d = load_dataset("super_glue", "wsc.fixed")
-        train_set = d["train"]
-        valid_set = d["validation"]
-
-        train_samples = [self.build_sample(example) for example in train_set]
-        valid_samples = [self.build_sample(example) for example in valid_set]
-        self.samples = {"train": train_samples, "valid": valid_samples}
-
-    def build_sample(self, example):
-        sample = \
-            Sample(
-                data=example,
-                candidates=[0, 1],
-                correct_candidate=example['label']
-            )
-
-        return sample
-
-    def get_template(self, template_version=0):
-        return {0: WSCTemplate}[template_version]()
-
-
-class ReCoRDDataset(Dataset):
-
-    def __init__(self, subtask=None, **kwargs) -> None:
-        self.load_dataset(subtask, **kwargs)
-
-    def load_dataset(self, path, **kwargs):
-        d = load_dataset("super_glue", "record")
-        train_set = d["train"]
-        valid_set = d["validation"]
-
-        train_samples = [self.build_sample(example) for example in train_set]
-        valid_samples = [self.build_sample(example) for example in valid_set]
-        self.samples = {"train": train_samples, "valid": valid_samples}
-
-    def build_sample(self, example):
-        sample = \
-            Sample(
-                data=example,
-                candidates=example['entities'],
-                correct_candidate=example['answers']
-            )
-
-        return sample
-
-    def get_template(self, template_version=0):
-        return {0: ReCoRDTemplateGPT3}[template_version]()
 
 
 class RTEDataset(Dataset):
@@ -403,37 +315,3 @@ class SQuADDataset(Dataset):
     def get_template(self, template_version=0):
         return {0: SQuADv2Template}[template_version]()
 
-
-class DROPDataset(Dataset):
-    metric_name = "f1"
-    generation = True
-
-    def __init__(self, subtask=None, **kwargs) -> None:
-        self.load_dataset()
-
-    def load_dataset(self):
-        dataset = load_dataset("drop")
-        train_examples = dataset["train"]
-        valid_examples = dataset["validation"]
-
-        train_samples = [self.build_sample(example, idx) for idx, example in enumerate(train_examples)]
-        valid_samples = [self.build_sample(example, idx) for idx, example in enumerate(valid_examples)]
-        self.samples = {"train": train_samples, "valid": valid_samples}
-
-    # for generative tasks, candidates are []
-    def build_sample(self, example, idx):
-        answers = example['answers_spans']['spans']
-        assert len(answers) > 0
-        return Sample(
-            id=idx,
-            data={
-                "context": example['passage'],
-                "question": example['question'],
-                "answers": answers
-            },
-            candidates=None,
-            correct_candidate=answers
-        )
-
-    def get_template(self, template_version=0):
-        return {0: DROPTemplate}[template_version]()
