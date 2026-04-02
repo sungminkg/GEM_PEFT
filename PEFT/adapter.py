@@ -1,7 +1,7 @@
 import logging
-import torch
-from torch import nn
 import re
+
+from torch import nn
 
 logger = logging.getLogger(__name__)
 
@@ -87,14 +87,14 @@ def decoder_layer_forward_hook(self, *args, **kwargs):
     if pre_norm and final_norm is not None:
         hidden_states = final_norm(hidden_states)
 
-    # FFN 분기
-    if hasattr(self, 'ffn'):  # phi 모델
+    # Handle the model-specific feed-forward block.
+    if hasattr(self, 'ffn'):  # Phi-style block
         hidden_states = self.ffn(hidden_states)
-        hidden_states = self.adapter2(hidden_states) + hidden_states  # <-- 핵심 수정: residual 다시 안 더함
-    elif hasattr(self, 'mlp'):  # 혹시 mlp 구조로 있는 경우
+        hidden_states = self.adapter2(hidden_states) + hidden_states
+    elif hasattr(self, 'mlp'):  # Some backbones expose the FFN as `mlp`
         hidden_states = self.mlp(hidden_states)
         hidden_states = self.adapter2(hidden_states) + hidden_states
-    else:  # opt, llama
+    else:  # OPT / LLaMA-style block
         hidden_states = self.fc1(hidden_states)
         hidden_states = self.activation_fn(hidden_states)
         hidden_states = self.fc2(hidden_states)
@@ -131,7 +131,7 @@ class Adapter:
         }
         act_fn = act_fn_dict[act_type]
 
-        # 우선 모든 injection 작업을 기록만 해둠
+        # Record injected adapter modules and register them after traversal.
         adapter_modules_to_register = []
 
         for name, module in model.named_modules():
@@ -170,8 +170,7 @@ class Adapter:
                 module.self_attn_device = device
                 module.forward = decoder_layer_forward_hook.__get__(module, type(module))
 
-                # 나중에 등록할 adapter 모듈 기록
-                adapter_modules_to_register.append( (name, module) )
+                adapter_modules_to_register.append((name, module))
         
         for name, param in model.named_parameters():
             if "adapter" in name:
@@ -179,7 +178,7 @@ class Adapter:
             else:
                 param.requires_grad = False
 
-        # named_modules 순회 끝난 후 attribute 등록 (안전)
+        # Register adapter modules after named_modules traversal to avoid mutation issues.
         for name, module in adapter_modules_to_register:
             setattr(self.model, f"{name.replace('.', '_')}_adapter1", module.adapter1)
             setattr(self.model, f"{name.replace('.', '_')}_adapter2", module.adapter2)

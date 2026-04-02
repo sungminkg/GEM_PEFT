@@ -35,7 +35,7 @@ class SST2Template(Template):
         return f"{text} It was {self.verbalizer[candidate]}"
     
     def encode_sfc(self, sample):
-        return f" It was"
+        return " It was"
 
     def verbalize_sfc(self, sample, candidate):
         return f" It was {self.verbalizer[candidate]}"
@@ -189,10 +189,10 @@ class MultiRCTemplate(Template):
         return f"{paragraph}\nQuestion: {question}\nI found this answer \"{answer}\". Is that correct? Yes or No?\n{self.verbalizer[candidate]}"
 
     def encode_sfc(self, sample):
-        return f""
+        return ""
 
     def verbalize_sfc(self, sample, candidate):
-        return f"{self.verbalizer[candidate]}"
+        return self.verbalizer[candidate]
 
     
 class CBTemplate(Template):
@@ -210,10 +210,10 @@ class CBTemplate(Template):
         return f"Suppose {premise} Can we infer that \"{hypothesis}\"? Yes, No, or Maybe?\n{self.verbalizer[candidate]}"
 
     def encode_sfc(self, sample):
-        return f""
+        return ""
 
     def verbalize_sfc(self, sample, candidate):
-        return f"{self.verbalizer[candidate]}"
+        return self.verbalizer[candidate]
 
 
 class WICTemplate(Template):
@@ -233,10 +233,10 @@ class WICTemplate(Template):
         return f"Does the word \"{word}\" have the same meaning in these two sentences? Yes, No?\n{sent1}\n{sent2}\n{self.verbalizer[candidate]}"
 
     def encode_sfc(self, sample):
-        return f""
+        return ""
 
     def verbalize_sfc(self, sample, candidate):
-        return f"{self.verbalizer[candidate]}"
+        return self.verbalizer[candidate]
 
 
 class WSCTemplate(Template):
@@ -256,10 +256,10 @@ class WSCTemplate(Template):
         return f"{text}\nIn the previous sentence, does the pronoun \"{span2.lower()}\" refer to {span1}? Yes or No?\n{self.verbalizer[candidate]}"
 
     def encode_sfc(self, sample):
-        return f""
+        return ""
 
     def verbalize_sfc(self, sample, candidate):
-        return f"{self.verbalizer[candidate]}"
+        return self.verbalizer[candidate]
 
 
 class ReCoRDTemplate(Template):
@@ -276,7 +276,7 @@ class ReCoRDTemplate(Template):
         return f"{passage}\n{query}\nQuestion: what is the \"@placeholder\"\nAnswer: {candidate}"
 
     def encode_sfc(self, sample):
-        return f"Answer:"
+        return "Answer:"
 
     def verbalize_sfc(self, sample, candidate):
         return f"Answer: {candidate}"
@@ -299,7 +299,7 @@ class ReCoRDTemplateGPT3(Template):
         # return f"{passage}\n{query}\nQuestion: what is the \"@placeholder\"\nAnswer: {candidate}"
 
     def encode_sfc(self, sample):
-        return f"-"
+        return "-"
 
     def verbalize_sfc(self, sample, candidate):
         query = sample.data['query'].replace("@placeholder", candidate[0] if isinstance(candidate, list) else candidate)
@@ -321,10 +321,10 @@ class RTETemplate(Template):
         return f"{premise}\nDoes this mean that \"{hypothesis}\" is true? Yes or No?\n{self.verbalizer[candidate]}"
 
     def encode_sfc(self, sample):
-        return f""
+        return ""
 
     def verbalize_sfc(self, sample, candidate):
-        return f"{self.verbalizer[candidate]}"
+        return self.verbalizer[candidate]
 
 
 class SQuADv2Template(Template):
@@ -333,7 +333,6 @@ class SQuADv2Template(Template):
         question = sample.data['question'].strip()
         title = sample.data['title']
         context = sample.data['context']
-        answer = sample.data['answers'][0] # there are multiple answers. for the prompt we only take the first one
 
         return f"Title: {title}\nContext: {context}\nQuestion: {question}\nAnswer:"
 
@@ -359,7 +358,6 @@ class DROPTemplate(Template):
         question = sample.data['question'].strip()
         # title = sample.data['title']
         context = sample.data['context']
-        answer = sample.data['answers'][0] # there are multiple answers. for the prompt we only take the first one
 
         return f"Passage: {context}\nQuestion: {question}\nAnswer:"
 
@@ -377,25 +375,3 @@ class DROPTemplate(Template):
 
     def verbalize_sfc(self, sample, candidate):
         raise NotImplementedError
-
-
-
-class MNLITemplate(Template):
-    # standard GLUE-style verbalizer
-    verbalizer = {0: "Yes", 1: "Maybe", 2: "No"}  # entailment, neutral, contradiction
-
-    def encode(self, sample):
-        premise = sample.data['premise']
-        hypothesis = sample.data['hypothesis']
-        return f"Premise: {premise}\nHypothesis: {hypothesis}\nCan we infer the hypothesis from the premise? Yes, No, or Maybe?"
-
-    def verbalize(self, sample, candidate):
-        premise = sample.data['premise']
-        hypothesis = sample.data['hypothesis']
-        return f"Premise: {premise}\nHypothesis: {hypothesis}\nCan we infer the hypothesis from the premise? Yes, No, or Maybe?\n{self.verbalizer[candidate]}"
-
-    def encode_sfc(self, sample):
-        return ""
-
-    def verbalize_sfc(self, sample, candidate):
-        return self.verbalizer[candidate]

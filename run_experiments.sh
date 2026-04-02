@@ -1,73 +1,46 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# batch=8로 실험!!
-# RTE: batch=8
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
-MODEL=microsoft/phi-2    # facebook/opt-125m, facebook/opt-1.3b, microsoft/deberta-v3-base
-EPOCH=7
-MASKING_PROB=0.999
-LOCAL_HOST=0
+MODEL=${MODEL:-microsoft/phi-2}
+EPOCH=${EPOCH:-10}
+MASKING_PROB=${MASKING_PROB:-0.999}
+DEEPSPEED_INCLUDE=${DEEPSPEED_INCLUDE:-localhost:0}
 
-  # for MODE in fft entropy_gradweight_masking lora bitfit adapter random_masking gradient_masking; do   gradient_ln_select_masking
-  #   for SEED in 28 210 8274 10283; do
+TASKS=(${TASKS:-RTE WIC MultiRC})
+MODES=(${MODES:-entropy_gradweight_masking})
+SEEDS=(${SEEDS:-28 210 10283})
 
-# for TASK in RTE WIC BoolQ MultiRC; do
-#   for MODE in fft; do
-#     for SEED in 28 10283; do 
-
-for TASK in SST2; do
-  for MODE in fft entropy_gradweight_masking lora bitfit adalora random_masking gradient_masking; do
-    for SEED in 28 10283; do 
-
-      if [ "$MODE" = "entropy_gradweight_masking" ]; then
-        for LR in 1e-5 1e-4; do   # 5e-5 1e-5 5e-4 1e-4
-          echo "Running $MODE | Task=$TASK | Seed=$SEED | LR=$LR"
-          MODEL=$MODEL TASK=$TASK EPOCH=$EPOCH MODE=$MODE LR=$LR MASKING_PROB=$MASKING_PROB LOCAL_HOST=$LOCAL_HOST SEED=$SEED bash run2.sh
-        done
-
-      elif [ "$MODE" = "random_masking" ]; then
-        for LR in 1e-3; do   # 1e-3 1e-2
-          echo "Running $MODE | Task=$TASK | Seed=$SEED | LR=$LR"
-          MODEL=$MODEL TASK=$TASK EPOCH=$EPOCH MODE=$MODE LR=$LR MASKING_PROB=$MASKING_PROB LOCAL_HOST=$LOCAL_HOST SEED=$SEED bash run2.sh
-        done
-
-      elif [ "$MODE" = "gradient_masking" ]; then
-        for LR in 1e-5; do   # 1e-5 1e-4
-          echo "Running $MODE | Task=$TASK | Seed=$SEED | LR=$LR"
-          MODEL=$MODEL TASK=$TASK EPOCH=$EPOCH MODE=$MODE LR=$LR MASKING_PROB=$MASKING_PROB LOCAL_HOST=$LOCAL_HOST SEED=$SEED bash run2.sh
-        done
-
-      elif [ "$MODE" = "bitfit" ]; then
-        for LR in 1e-5; do    # 1e-5 1e-4
-          echo "Running $MODE | Task=$TASK | Seed=$SEED | LR=$LR"
-          MODEL=$MODEL TASK=$TASK EPOCH=$EPOCH MODE=$MODE LR=$LR LOCAL_HOST=$LOCAL_HOST SEED=$SEED bash run2.sh
-        done
-
-      elif [ "$MODE" = "adapter" ]; then
-        for LR in 1e-5; do  # 1e-5 1e-4
-          echo "Running $MODE | Task=$TASK | Seed=$SEED | LR=$LR"
-          MODEL=$MODEL TASK=$TASK EPOCH=$EPOCH MODE=$MODE LR=$LR LOCAL_HOST=$LOCAL_HOST SEED=$SEED bash run2.sh
-        done
-
-      elif [ "$MODE" = "lora" ]; then
-        for LR in 1e-5; do  # 1e-5 1e-4
-          echo "Running $MODE | Task=$TASK | Seed=$SEED | LR=$LR"
-          MODEL=$MODEL TASK=$TASK EPOCH=$EPOCH MODE=$MODE LR=$LR LOCAL_HOST=$LOCAL_HOST SEED=$SEED bash run2.sh
-        done
-      
-      elif [ "$MODE" = "fft" ]; then
-        for LR in 1e-6 1e-5; do
-          echo "Running $MODE | Task=$TASK | Seed=$SEED | LR=$LR"
-          MODEL=$MODEL TASK=$TASK EPOCH=$EPOCH MODE=$MODE LR=$LR LOCAL_HOST=$LOCAL_HOST SEED=$SEED bash run2.sh
-        done
-
+for TASK in "${TASKS[@]}"; do
+  for MODE in "${MODES[@]}"; do
+    for SEED in "${SEEDS[@]}"; do
+      if [[ -n "${LR:-}" ]]; then
+        RUN_LR="${LR}"
       else
-        for LR in 1e-5 1e-4; do
-          echo "Running $MODE | Task=$TASK | Seed=$SEED | LR=$LR"
-          MODEL=$MODEL TASK=$TASK EPOCH=$EPOCH MODE=$MODE LR=$LR MASKING_PROB=$MASKING_PROB LOCAL_HOST=$LOCAL_HOST SEED=$SEED bash run2.sh
-        done
+        case "${MODE}" in
+          random_masking)
+            RUN_LR="1e-3"
+            ;;
+          fft)
+            RUN_LR="1e-6"
+            ;;
+          *)
+            RUN_LR="1e-5"
+            ;;
+        esac
       fi
 
+      echo "Running MODE=${MODE} TASK=${TASK} SEED=${SEED} LR=${RUN_LR}"
+      MODEL="${MODEL}" \
+      TASK="${TASK}" \
+      EPOCH="${EPOCH}" \
+      MODE="${MODE}" \
+      LR="${RUN_LR}" \
+      MASKING_PROB="${MASKING_PROB}" \
+      DEEPSPEED_INCLUDE="${DEEPSPEED_INCLUDE}" \
+      SEED="${SEED}" \
+      bash "${SCRIPT_DIR}/run.sh"
     done
   done
 done

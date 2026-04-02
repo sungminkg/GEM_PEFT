@@ -1,30 +1,21 @@
 import json
-import os
-import torch
-import torch.nn as nn
 import contextlib
-from typing import Optional, Union
-import numpy as np
 from dataclasses import dataclass, is_dataclass, asdict
 import logging
 import time
-from torch.nn import CrossEntropyLoss
-import torch.nn.functional as F
-from transformers.modeling_outputs import CausalLMOutputWithPast
-import torch
-from transformers.utils import PaddingStrategy
-from transformers import PreTrainedTokenizerBase, AutoModel, AutoTokenizer
-from transformers.data.data_collator import DataCollatorMixin
-import transformers
-from typing import Optional, Union, List, Dict, Any
-import signal
-from subprocess import call
 from collections.abc import Mapping
-from typing import Any, Callable, Dict, List, NewType, Optional, Tuple, Union
+from typing import Any, Dict, List, NewType, Optional, Union
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch.nn import CrossEntropyLoss
+from transformers.data.data_collator import DataCollatorMixin
+from transformers import PreTrainedTokenizerBase
+from transformers.modeling_outputs import CausalLMOutputWithPast
+from transformers.utils import PaddingStrategy
 
 InputDataClass = NewType("InputDataClass", Any)
-from dataclasses import dataclass
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +199,7 @@ def encode_prompt_train(task, template, train_samples, eval_sample, tokenizer, m
         max_length = max_length - max_new_tokens
 
     if any([len(encoding) > max_length for encoding in encodings]):
-        logger.warn("Exceed max length")
+        logger.warning("Exceed max length")
         
     # if tokenizer.add_bos_token:
     #     encodings = [encoding[0:1] + encoding[1:][-(max_length - 1):] for encoding in encodings]
@@ -265,9 +256,9 @@ def encode_prompt_eval(task, template, eval_samples, tokenizer, max_length, sfc=
     if generation:
         tokenizer.padding_side = "left"
 
-    # Tokenize
-    encodings = tokenizer.batch_encode_plus(final_prompts, padding=True)['input_ids']
-    attention_masks = tokenizer.batch_encode_plus(final_prompts, padding=True)['attention_mask']
+    tokenized = tokenizer.batch_encode_plus(final_prompts, padding=True)
+    encodings = tokenized["input_ids"]
+    attention_masks = tokenized["attention_mask"]
 
     # logger.info(f'final_prompts: {final_prompts}')
     # logger.info(f'encodings length: {len(encodings)}')
@@ -278,50 +269,29 @@ def encode_prompt_eval(task, template, eval_samples, tokenizer, max_length, sfc=
         max_length = max_length - max_new_tokens
 
     if any([len(encoding) > max_length for encoding in encodings]):
-        logger.warn("Exceed max length")
+        logger.warning("Exceed max length")
 
     if hasattr(tokenizer, 'add_bos_token') and tokenizer.add_bos_token:
-        encodings = [encoding[0:1] + encoding[1:][-(max_length - 1):] for encoding in encodings]
+        truncated_pairs = [
+            (
+                encoding[0:1] + encoding[1:][-(max_length - 1):],
+                attention_mask[0:1] + attention_mask[1:][-(max_length - 1):],
+            )
+            for encoding, attention_mask in zip(encodings, attention_masks)
+        ]
     else:
-        encodings = [encoding[-max_length:] for encoding in encodings]
-    # if tokenizer.add_bos_token:
-    #     encodings = [encoding[0:1] + encoding[1:][-(max_length - 1):] for encoding in encodings]
-    # else:
-    #     encodings = [encoding[-max_length:] for encoding in encodings]
+        truncated_pairs = [
+            (encoding[-max_length:], attention_mask[-max_length:])
+            for encoding, attention_mask in zip(encodings, attention_masks)
+        ]
+
+    encodings = [pair[0] for pair in truncated_pairs]
+    attention_masks = [pair[1] for pair in truncated_pairs]
 
     return encodings, attention_masks, option_lens
 
 
-class SupervisedContrastiveLoss(nn.Module):
-    def __init__(self, temperature=0.1):
-        super(SupervisedContrastiveLoss, self).__init__()
-        self.temperature = temperature
-
-    def forward(self, embeddings, labels):
-        embeddings = F.normalize(embeddings, p=2, dim=1)
-        similarity_matrix = torch.matmul(embeddings, embeddings.T) / self.temperature
-        labels = labels.view(-1, 1)
-        mask = torch.eq(labels, labels.T).float().to(embeddings.device)
-        exp_logits = torch.exp(similarity_matrix) * mask
-        log_prob = similarity_matrix - torch.log(exp_logits.sum(dim=1, keepdim=True) + 1e-9)
-        loss = -torch.sum(log_prob * mask) / mask.sum()
-        return loss
-
-class BERTEmbeddingExtractor:
-    def __init__(self, model_name="bert-base-uncased", device="cuda"):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name).to(device)
-        self.device = device
-
-    def get_embeddings(self, texts):
-        encoded = self.tokenizer(
-            texts, padding=True, truncation=True, return_tensors="pt", max_length=128
-        ).to(self.device)
-        with torch.no_grad():
-            outputs = self.model(**encoded)
-        cls_embeddings = outputs.last_hidden_state[:, 0, :]
-        return cls_embeddings
-
+    
 @dataclass
 class ICLCollator:
     """
@@ -435,58 +405,6 @@ class NondiffCollator(DataCollatorMixin):
             batch["gold"] = [feature["gold"] for feature in features]
 
         return batch
-
-
-class SIGUSR1Callback(transformers.TrainerCallback):
-    """
-    This callback is used to save the model when a SIGUSR1 signal is received
-    (SLURM stop signal or a keyboard interruption signal).
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.signal_received = False
-        signal.signal(signal.SIGUSR1, self.handle_signal)
-        signal.signal(signal.SIGINT, self.handle_signal)
-        logger.warn("Handler registered")
-
-    def handle_signal(self, signum, frame):
-        self.signal_received = True
-        logger.warn("Signal received")
-
-    def on_step_end(self, args, state, control, **kwargs):
-        if self.signal_received:
-            control.should_save = True
-            control.should_training_stop = True
-
-    def on_train_end(self, args, state, control, **kwargs):
-        if self.signal_received:
-            exit(0)
-            
-            
-class SupervisedContrastiveLoss(torch.nn.Module):
-    def __init__(self, temperature=0.1):
-        super(SupervisedContrastiveLoss, self).__init__()
-        self.temperature = temperature
-
-    def forward(self, embeddings, labels):
-        # Normalize embeddings
-        embeddings = F.normalize(embeddings, p=2, dim=1)
-
-        # Cosine similarity
-        similarity_matrix = torch.matmul(embeddings, embeddings.T) / self.temperature
-
-        # Mask for positive samples
-        labels = labels.view(-1, 1)
-        mask = torch.eq(labels, labels.T).float().to(embeddings.device)
-
-        # Logits calculation
-        exp_logits = torch.exp(similarity_matrix) * mask
-        log_prob = similarity_matrix - torch.log(exp_logits.sum(dim=1, keepdim=True) + 1e-9)
-
-        # Compute the loss
-        loss = -torch.sum(log_prob * mask) / mask.sum()
-        return loss
 
 
 

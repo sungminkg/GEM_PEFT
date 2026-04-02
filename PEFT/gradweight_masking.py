@@ -1,9 +1,11 @@
 import logging
+
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 logger = logging.getLogger(__name__)
+
 
 class GradWeightMaskingLinear(nn.Module):
     def __init__(self, base_Linear: nn.Linear, masking_prob: float = 0.0):
@@ -21,7 +23,6 @@ class GradWeightMaskingLinear(nn.Module):
         elif mask_mode == 'gradweight':
             grad = grad_tensor.to(self.base_Linear.weight.device).abs()
             weight = weight_tensor.to(self.base_Linear.weight.device).abs()
-            print(f"Minimum value: {weight.min().item()}, Maximum value: {weight.max().item()}")
             ratio = grad / (weight + 1e-8)
         elif mask_mode == 'weight':
             weight = weight_tensor.abs()
@@ -29,10 +30,7 @@ class GradWeightMaskingLinear(nn.Module):
             
         if k > 0:
             threshold = torch.topk(ratio.view(-1), k, largest=True, sorted=False).values[-1]
-            print(f'k: {k}, Threshold is:{threshold}\n')
             if torch.isinf(threshold):
-                # self.masking = torch.ones_like(ratio).float()
-                # self.masking = torch.zeros_like(ratio).float()
                 threshold = torch.topk(grad_tensor.abs().view(-1), k, largest=True, sorted=False).values[-1]
                 self.masking = (ratio >= threshold).float().to(self.base_Linear.weight.device).detach().to(self.base_Linear.weight.dtype)
             else:
@@ -68,7 +66,12 @@ class GradWeightMasking:
 
         # Calculate and log the percentage of tunable parameters
         tunable_percentage = (self.tunable_param_count / self.total_param_count) * 100
-        logger.info(f"Tunable Parameters: {self.tunable_param_count} / {self.total_param_count} ({tunable_percentage}%)")
+        logger.info(
+            "Tunable Parameters: %s / %s (%.6f%%)",
+            self.tunable_param_count,
+            self.total_param_count,
+            tunable_percentage,
+        )
 
 
     def _tuning_params_per_module(self):

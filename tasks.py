@@ -1,16 +1,28 @@
-from templates import *
-from utils import temp_seed
-import json
-import os
-from datasets import load_dataset
 from dataclasses import dataclass
 from typing import List, Union
-import string
-import random
-import datasets
-import sys
-import numpy as np
 import logging
+import sys
+
+import numpy as np
+from datasets import load_dataset
+
+from templates import (
+    BoolQTemplate,
+    BoolQTemplateV2,
+    BoolQTemplateV3,
+    CBTemplate,
+    CopaTemplate,
+    DROPTemplate,
+    MultiRCTemplate,
+    RTETemplate,
+    ReCoRDTemplateGPT3,
+    SST2Template,
+    SQuADv2Template,
+    Template,
+    WICTemplate,
+    WSCTemplate,
+)
+from utils import temp_seed
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -47,7 +59,7 @@ class Dataset:
     def get_task_name(self):
         return self.subtask
 
-    def load_dataset():
+    def load_dataset(self):
         raise NotImplementedError
 
     def get_template(self, template_version=0):
@@ -81,7 +93,7 @@ class Dataset:
                     train_samples.append(self.sample_subset(data_split="train", seed=set_seed,
                                                             num=num_train + num_dev))  # dev set is included at the end of train set
                     if num_train + num_dev > len(self.samples["train"]):
-                        logger.warn("num_train + num_dev > available training examples")
+                        logger.warning("num_train + num_dev > available training examples")
                 else:
                     train_samples.append(self.sample_subset(data_split="train", seed=set_seed, num=num_train))
                 if num_dev is not None:
@@ -129,6 +141,7 @@ class SST2Dataset(Dataset):
     def get_template(self, template_version=0):
         return {0: SST2Template}[template_version]()
 
+
 class CopaDataset(Dataset):
     train_sep = "\n\n"
     mixed_set = False
@@ -158,7 +171,6 @@ class CopaDataset(Dataset):
 
     def get_template(self, template_version=0):
         return {0: CopaTemplate}[template_version]()
-
 
 
 class BoolQDataset(Dataset):
@@ -315,40 +327,17 @@ class ReCoRDDataset(Dataset):
         self.samples = {"train": train_samples, "valid": valid_samples}
 
     def build_sample(self, example):
-        # Get list of candidates and answers
-        candidates = example['entities']
-        answers = example['answers']
+        sample = \
+            Sample(
+                data=example,
+                candidates=example['entities'],
+                correct_candidate=example['answers']
+            )
 
-        # Find the first matching answer in candidates
-        correct = None
-        for a in answers:
-            if a in candidates:
-                correct = a
-                break
-
-        if correct is None:
-            raise ValueError(f"No correct answer found among candidates.\nAnswers: {answers}\nCandidates: {candidates}")
-
-        sample = Sample(
-            data=example,
-            candidates=candidates,
-            correct_candidate=correct  # now a single string
-        )
         return sample
-
-    # def build_sample(self, example):
-    #     sample = \
-    #         Sample(
-    #             data=example,
-    #             candidates=example['entities'],
-    #             correct_candidate=example['answers']
-    #         )
-
-    #     return sample
 
     def get_template(self, template_version=0):
         return {0: ReCoRDTemplateGPT3}[template_version]()
-
 
 
 class RTEDataset(Dataset):
@@ -448,28 +437,3 @@ class DROPDataset(Dataset):
 
     def get_template(self, template_version=0):
         return {0: DROPTemplate}[template_version]()
-    
-    
-class MNLIDataset(Dataset):
-    def __init__(self, subtask=None, **kwargs) -> None:
-        self.load_dataset(subtask, **kwargs)
-
-    def load_dataset(self, path, **kwargs):
-        d = load_dataset("glue", "mnli")
-        train_set = d["train"]
-        valid_set = d["validation_matched"]  # 또는 validation_mismatched도 가능
-
-        train_samples = [self.build_sample(example) for example in train_set]
-        valid_samples = [self.build_sample(example) for example in valid_set]
-        self.samples = {"train": train_samples, "valid": valid_samples}
-
-    def build_sample(self, example):
-        sample = Sample(
-            data=example,
-            candidates=[0, 1, 2],  # 0: entailment, 1: neutral, 2: contradiction
-            correct_candidate=example["label"]
-        )
-        return sample
-
-    def get_template(self, template_version=0):
-        return {0: MNLITemplate}[template_version]()  
